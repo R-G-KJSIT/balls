@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Bouncing Balls Doubler</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            background-color: #1a1a1a;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-family: 'Inter', sans-serif;
+            font-size: 1.1rem;
+            padding: 8px 15px;
+            background: rgba(45, 45, 45, 0.9);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+        }
+
+        #info span {
+            font-weight: bold;
+            color: #4CAF50; /* Green highlight */
+        }
+    </style>
+    <!-- Load three.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <!-- Updated label to reflect 'Duplication Events' instead of 'Corner Hits' -->
+    <div id="info">Balls: <span id="ballCount">1</span> | Duplication Events: <span id="hitCount">0</span></div>
+
+    <script>
+        // --- Setup THREE.js Scene ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 5, 5);
+        scene.add(directionalLight);
+
+        // Set up the bounds (a large invisible cube)
+        const BOUNDS = 10;
+        const BOUNDARY_COLOR = 0xaaaaaa; // Light gray for wireframe
+
+        // Add wireframe boundary for visual clarity
+        const boundaryGeometry = new THREE.BoxGeometry(BOUNDS * 2, BOUNDS * 2, BOUNDS * 2);
+        const boundaryMaterial = new THREE.MeshBasicMaterial({ color: BOUNDARY_COLOR, wireframe: true, transparent: true, opacity: 0.3 });
+        const boundary = new THREE.Mesh(boundaryGeometry, boundaryMaterial);
+        scene.add(boundary);
+
+        // Camera positioning
+        camera.position.z = BOUNDS * 2.5;
+        camera.position.y = 0;
+        camera.lookAt(0, 0, 0);
+
+        // --- Ball Class and State ---
+
+        class Ball {
+            constructor(radius = 0.5, color = 0xff0000) {
+                this.radius = radius;
+                this.color = color;
+
+                const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
+                const material = new THREE.MeshPhongMaterial({ color: this.color, shininess: 100 });
+                this.mesh = new THREE.Mesh(geometry, material);
+                scene.add(this.mesh);
+
+                // Initial random position within bounds
+                this.mesh.position.x = Math.random() * (BOUNDS * 1.5) - BOUNDS * 0.75;
+                this.mesh.position.y = Math.random() * (BOUNDS * 1.5) - BOUNDS * 0.75;
+                this.mesh.position.z = Math.random() * (BOUNDS * 1.5) - BOUNDS * 0.75;
+
+                // Initial random velocity
+                const speed = 0.1;
+                this.velocity = new THREE.Vector3(
+                    (Math.random() - 0.5),
+                    (Math.random() - 0.5),
+                    (Math.random() - 0.5)
+                ).normalize().multiplyScalar(0.08);
+
+                // Cooldown to prevent immediate re-triggering of doubling from a single bounce
+                this.lastSurfaceHitTime = 0; 
+            }
+
+            update() {
+                this.mesh.position.add(this.velocity);
+
+                // Boundary collision detection
+                let hitCount = 0; // Tracks how many axes hit a wall this frame
+                
+                // X-axis collision
+                if (this.mesh.position.x > BOUNDS - this.radius || this.mesh.position.x < -BOUNDS + this.radius) {
+                    this.velocity.x *= -1;
+                    // Correct position to prevent sticking
+                    this.mesh.position.x = Math.sign(this.mesh.position.x) * (BOUNDS - this.radius); 
+                    hitCount++;
+                }
+
+                // Y-axis collision
+                if (this.mesh.position.y > BOUNDS - this.radius || this.mesh.position.y < -BOUNDS + this.radius) {
+                    this.velocity.y *= -1;
+                    this.mesh.position.y = Math.sign(this.mesh.position.y) * (BOUNDS - this.radius);
+                    hitCount++;
+                }
+
+                // Z-axis collision
+                if (this.mesh.position.z > BOUNDS - this.radius || this.mesh.position.z < -BOUNDS + this.radius) {
+                    this.velocity.z *= -1;
+                    this.mesh.position.z = Math.sign(this.mesh.position.z) * (BOUNDS - this.radius);
+                    hitCount++;
+                }
+
+                // Duplication Logic: Detect collision on ANY axis (>= 1)
+                if (hitCount >= 1) { 
+                    const currentTime = Date.now();
+                    if (currentTime - this.lastSurfaceHitTime > 500) { // 500ms cooldown per ball
+                        this.lastSurfaceHitTime = currentTime;
+                        return true; // Signal a surface hit for potential doubling
+                    }
+                }
+                return false;
+            }
+        }
+
+        let balls = [];
+        let ballCountElement = document.getElementById('ballCount');
+        let hitCountElement = document.getElementById('hitCount');
+        let duplicationEventCounter = 0;
+        const GLOBAL_COOLDOWN_TIME = 1000; // Global cooldown for doubling mechanism (1.0 second)
+        let lastDoublingTime = 0;
+        let rotationAngle = 0;
+
+        // Function to generate a new ball with randomized properties
+        function generateNewBall() {
+            const radius = 0.3 + Math.random() * 0.4; // Radius between 0.3 and 0.7
+            const color = Math.random() * 0xffffff;
+            return new Ball(radius, color);
+        }
+
+        // Initial ball
+        balls.push(generateNewBall());
+
+        function doubleBalls() {
+            const currentTime = Date.now();
+            if (currentTime - lastDoublingTime < GLOBAL_COOLDOWN_TIME) {
+                // Respect global cooldown
+                return;
+            }
+
+            lastDoublingTime = currentTime;
+            duplicationEventCounter++;
+            hitCountElement.textContent = duplicationEventCounter;
+
+            const currentCount = balls.length;
+            const newBalls = [];
+            
+            for (let i = 0; i < currentCount; i++) {
+                const existingBall = balls[i];
+
+                // Create two new balls for doubling
+                
+                // New Ball 1 (Slightly perturbed velocity)
+                const newBall1 = generateNewBall();
+                newBall1.mesh.position.copy(existingBall.mesh.position);
+                
+                const perturbation = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 0.5,
+                    (Math.random() - 0.5) * 0.5
+                );
+                newBall1.velocity.copy(existingBall.velocity).add(perturbation).normalize().multiplyScalar(0.08);
+                newBalls.push(newBall1);
+
+                // New Ball 2 (Random velocity)
+                const newBall2 = generateNewBall();
+                newBall2.mesh.position.copy(existingBall.mesh.position);
+                
+                newBall2.velocity.set(
+                    (Math.random() - 0.5),
+                    (Math.random() - 0.5),
+                    (Math.random() - 0.5)
+                ).normalize().multiplyScalar(0.08);
+
+                newBalls.push(newBall2);
+            }
+            
+            balls.push(...newBalls); // Add new balls to the main array
+            
+            ballCountElement.textContent = balls.length;
+        }
+
+        // Temporary Vector for collision calculations
+        const tempNormal = new THREE.Vector3();
+
+        // --- Main Animation Loop ---
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            let surfaceHitDetected = false;
+
+            // 1. Update balls position and check for wall hits
+            for (let i = balls.length - 1; i >= 0; i--) {
+                const ball = balls[i];
+                if (ball.update()) {
+                    surfaceHitDetected = true;
+                }
+            }
+            
+            // Trigger doubling event if any ball hit a surface and cooldown allows
+            if (surfaceHitDetected) {
+                doubleBalls();
+            }
+            
+            // 2. Ball-to-Ball Collision Detection and Resolution (No duplication here)
+            const numBalls = balls.length;
+            for (let i = 0; i < numBalls; i++) {
+                const ball1 = balls[i];
+                for (let j = i + 1; j < numBalls; j++) {
+                    const ball2 = balls[j];
+
+                    // Collision detection: distance between centers < sum of radii
+                    const distanceVector = ball1.mesh.position.clone().sub(ball2.mesh.position);
+                    const distance = distanceVector.length();
+                    const minDistance = ball1.radius + ball2.radius;
+
+                    if (distance < minDistance) {
+                        // a. Resolve overlap (prevent sticking)
+                        const overlap = minDistance - distance;
+                        const normal = distanceVector.normalize(tempNormal);
+                        
+                        // Move balls apart
+                        const correction = normal.clone().multiplyScalar(overlap * 0.51); // 0.51 ensures slight over-correction
+                        ball1.mesh.position.add(correction);
+                        ball2.mesh.position.sub(correction);
+                        
+                        // b. Collision Response (Simple Elastic Collision along the normal for equal masses)
+                        const v1 = ball1.velocity;
+                        const v2 = ball2.velocity;
+                        
+                        const v1n = v1.dot(normal); // Velocity of ball1 along the normal
+                        const v2n = v2.dot(normal); // Velocity of ball2 along the normal
+                        
+                        // If balls are already moving away, ignore collision response this frame
+                        if (v1n - v2n >= 0) continue; 
+
+                        // Separate normal and tangential components
+                        const v1t = v1.clone().sub(normal.clone().multiplyScalar(v1n)); // Tangential component (unchanged)
+                        const v2t = v2.clone().sub(normal.clone().multiplyScalar(v2n));
+                        
+                        // New normal velocities (swapped for equal mass collision)
+                        const v1n_after = v2n;
+                        const v2n_after = v1n;
+
+                        // Final velocities: Tangential + New Normal
+                        v1.copy(v1t.add(normal.clone().multiplyScalar(v1n_after)));
+                        v2.copy(v2t.add(normal.clone().multiplyScalar(v2n_after)));
+                    }
+                }
+            }
+
+
+            // Rotate the camera around the center (0, 0, 0)
+            rotationAngle += 0.005;
+            camera.position.x = Math.sin(rotationAngle) * BOUNDS * 2.5;
+            camera.position.z = Math.cos(rotationAngle) * BOUNDS * 2.5;
+            camera.lookAt(0, 0, 0);
+
+            renderer.render(scene, camera);
+        }
+
+        // Start animation on load
+        window.onload = function () {
+            animate();
+        }
+
+        // --- Handle Window Resize ---
+        window.addEventListener('resize', onWindowResize, false);
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    </script>
+</body>
+</html>
